@@ -7,20 +7,20 @@ end
 module BaseWithMethod
   include Base
   def foo
-#     ^ apply-rename: [B] newName: bar
+
   end
 end
 
 module OtherModuleWithMethod
-  def foo
-#     ^ apply-rename: [D] newName: bar
+  def foo(i)
+
   end
 end
 
 class A
   include BaseWithMethod
   def foo
-#     ^ apply-rename: [A] newName: bar
+
   end
 end
 
@@ -31,7 +31,7 @@ end
 class C
   include Base
   def foo
-#     ^ apply-rename: [C] newName: bar
+
   end
 end
 
@@ -46,5 +46,5 @@ end
 A.new.foo
 B.new.foo
 D.new.foo
-E.new.foo
+E.new.foo(1)
 #     ^ apply-rename: [E] newName: bar

@@ -44,20 +44,52 @@ bool isSubclass(const core::GlobalState &gs, core::SymbolRef root, core::SymbolR
     }
     visited[s.classOrModuleIndex()] = true;
 
-    auto super = s.data(gs)->superClass();
-    if (super.exists()) {
-        memoized[s.classOrModuleIndex()] = isSubclass(gs, root, super, memoized, visited);
+    if (s.data(gs)->derivesFrom(gs, root)) {
+        memoized[s.classOrModuleIndex()] = true;
     } else {
-        memoized[s.classOrModuleIndex()] = false;
+        auto super = s.data(gs)->superClass(); // use derivesFrom? or consider mixins in some way?
+        auto parents = s.data(gs)->mixins();
+        reverse(parents.begin(), parents.end());
+        parents.emplace_back(super);
+        for (auto p : parents) {
+            if (p.exists()) {
+                auto result = isSubclass(gs, root, p, memoized, visited);
+                memoized[s.classOrModuleIndex()] = result;
+
+                // auto str = result ? " is" : " isn't";
+                // cout << s.data(gs)->name.show(gs) << str << " a subclass" << endl;
+
+                if (memoized[s.classOrModuleIndex()]) {
+                    return memoized[s.classOrModuleIndex()];
+                }
+            } else {
+                memoized[s.classOrModuleIndex()] = false;
+            }
+        }
     }
+    // is s either a subclass of root
+    // or does s include root
+    // or does s include something that includes root
+    // or does s derive from something that includes root
+    // if s->data(gs)->derivesFrom(gs, root) -> done
+    // else recurse on all the mixins of s.data(gs)->mixins() and the superclass of s
+    // parents = all the mixins + the superclass loop p over parents : result =
+    //               recurse(root, p) if result memoized[] return
+
+    // auto super = s.data(gs)->superClass();
+    // if (super.exists()) {
+    //     memoized[s.classOrModuleIndex()] = isSubclass(gs, root, super, memoized, visited);
+    // } else {
+    //     memoized[s.classOrModuleIndex()] = false;
+    // }
     return memoized[s.classOrModuleIndex()];
-}
+} // namespace
 
 // Returns all subclasses of root (including root)
 vector<core::SymbolRef> getSubclasses(LSPTypecheckerDelegate &typechecker, core::SymbolRef root) {
     const core::GlobalState &gs = typechecker.state();
-    vector<bool> memoized(gs.classAndModulesUsed());
-    vector<bool> visited(gs.classAndModulesUsed());
+    vector<bool> memoized(gs.classAndModulesUsed()); // memoized[i] is true if i is a subclass of root
+    vector<bool> visited(gs.classAndModulesUsed());  // visitied[i] if true if we have checked whether i is a subclass
     memoized[root.classOrModuleIndex()] = true;
     visited[root.classOrModuleIndex()] = true;
 
@@ -65,6 +97,7 @@ vector<core::SymbolRef> getSubclasses(LSPTypecheckerDelegate &typechecker, core:
     for (u4 i = 1; i < gs.classAndModulesUsed(); ++i) {
         auto s = core::SymbolRef(&gs, core::SymbolRef::Kind::ClassOrModule, i);
         if (isSubclass(gs, root, s, memoized, visited)) {
+            // cout << s.data(gs)->name.show(gs) << endl;
             subclasses.emplace_back(s);
         }
     }
@@ -77,13 +110,35 @@ core::SymbolRef findRootClassWithMethod(const core::GlobalState &gs, core::Symbo
     auto root = klass;
     ENFORCE(klass.data(gs)->isClassOrModule());
     while (true) {
-        auto tmp = root.data(gs)->superClass();
-        ENFORCE(tmp.exists()); // everything derives from Kernel::Object so we can't ever reach the actual top type
-        if (!tmp.exists() || !(tmp.data(gs)->findMember(gs, methodName).exists())) {
+        auto super = root.data(gs)->superClass();
+        auto parents = root.data(gs)->mixins();
+        for (auto p : parents) {
+            cout << p.data(gs)->name.show(gs) << endl;
+        }
+
+        reverse(parents.begin(), parents.end());
+        parents.emplace_back(super);
+
+        core::SymbolRef tmp;
+        cout << "Parents length " << parents.size() << endl;
+        for (auto p : parents) {
+            cout << p.data(gs)->name.show(gs) << endl;
+            ENFORCE(p.exists()); // everything derives from Kernel::Object so we can't ever reach the actual top type
+            if (!p.exists() || !(p.data(gs)->findMember(gs, methodName).exists())) {
+                break;
+            }
+            tmp = p;
+        }
+
+        if (!tmp.exists()) {
             break;
         }
         root = tmp;
+        // instead of just the root->superClass: find super class + all mixins
+        // figure out which is the right one (based on which of them have the method, and ordering of mixins)
+        // (check mixins first, superclass last)
     }
+
     return root;
 }
 
@@ -194,7 +249,10 @@ variant<JSONNullObject, unique_ptr<WorkspaceEdit>> RenameTask::getRenameEdits(LS
         // We have to check for methods as part of a class hierarchy: Follow superClass() links till we find the root;
         // then find the full tree; then look for methods with the same name as ours; then find all references to all
         // those methods and rename them.
-        auto symbolClass = symbolData->enclosingClass(gs);
+        // auto symbolClass = symbolData->enclosingClass(gs);
+        auto symbolClass = symbolData->owner;
+        cout << "symbolClass " << symbolClass.data(gs)->name.show(gs) << endl;
+        ENFORCE(symbolClass.exists());
 
         // We have to be careful to follow superclass links only as long as we find a method that `symbol` overrides.
         // Otherwise we will find unrelated methods and rename them even though they don't need to be (see the
